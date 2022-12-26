@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.test
+.vscode
+
+# infra binary
+dist/
+querylinter.so
+
+sendgrid.env
+test/root.key

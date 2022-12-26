@@ -1,0 +1,98 @@
+# The labels in this file will be synced to Github by the Github workflow in
+# .github/workflows/manage-labels.yaml
+#
+# All labels are organized by category using a <category>/ prefix
+
+
+- name: "kind/bug"
+  color: "D4C5F9"
+  description: A report or a fix for a problem with functional correctness.
+- name: "kind/feature"
+  color: "D4C5F9"
+  description: A request or change that improves functional suitability.
+- name: "kind/improvement"
+  color: "D4C5F9"
+  description: A report of a quality problem, or a change that addresses a quality problem.
+- name: "kind/maintenance"
+  color: "D4C5F9"
+  description: A change related to the maintenance of the project.
+- name: "kind/question"
+  color: "D4C5F9"
+  description: A request for more information.
+- name: "kind/epic"
+  color: "D4C5F9"
+- name: "kind/security"
+  color: "D4C5F9"
+
+
+- name: "area/documentation"
+  color: "F9D0C4"
+  description: Improvements or additions to documentation.
+- name: "area/api"
+  color: "F9D0C4"
+  description: Issue or PR related to the Infra API.
+- name: "area/ui"
+  color: "F9D0C4"
+- name: "area/deploy"
+  color: "F9D0C4"
+  description: Issue or PR related to deploying Infra.
+- name: "area/release"
+  color: "F9D0C4"
+- name: "area/cli"
+  color: "F9D0C4"
+  description: Issue or PR related to the command-line interface.
+- name: "area/destinations"
+  color: "F9D0C4"
+- name: "area/destinations/kubernetes"
+  color: "F9D0C4"
+- name: "area/destinations/ssh"
+  color: "F9D0C4"
+- name: "area/providers"
+  color: "F9D0C4"
+- name: "area/providers/okta"
+  color: "F9D0C4"
+- name: "area/providers/infra"
+  color: "F9D0C4"
+- name: "area/ci"
+  color: "F9D0C4"
+  description: Issue or PR related to Github actions, and other CI automation.
+- name: "area/observability"
+  color: "F9D0C4"
+  description: Issue or PR related to observability.
+- name: "area/secrets"
+  color: "F9D0C4"
+
+
+- name: "priority/high"
+  color: "d93f0b"
+  description: The issue is high priority.
+
+
+- name: "status/idea"
+  color: "ffffff"
+  description: The issue is an idea that may require more research.
+- name: "status/blocked"
+  color: "b60205"
+  description: The issue is blocked on out-of-repository dependencies.
+
+# we could remove status/wip when we have access to draft PRs
+- name: "status/wip"
+  color: "dddddd"
+  description: The pull request is a work in progress.
+
+- name: "status/stale"
+  description: Used by actions/stale to mark an issue or PR as stale.
+  color: "dddddd"
+- name: "status/never-stale"
+  color: "dddddd"
+  description: Indicates to actions/stale that the issue or PR should never be marked stale.
+
+- name: "action/fuzz"
+  color: "dddddd"
+  description: Run fuzzing on this pull request.
+- name: "action/race"
+  color: "dddddd"
+  description: Enable the Go race detector in subsequent test runs of this pull request.
+- name: "action/test-acceptance"
+  color: "dddddd"
+  description: Run the acceptance test suite in subsequent test runs of this pull request.

@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.git
+.test
+.vscode
+website
+docs
+infra
+release
+scripts
+Makefile
+Dockerfile
+build
+dist
+ui/node_modules
+infra
+helm

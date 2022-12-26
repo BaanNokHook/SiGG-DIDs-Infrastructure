@@ -1,0 +1,17 @@
+name: ci
+
+on:
+  pull_request:
+    # Dummy test job to pass required status checks. Any component
+    # implementing or requiring real tests should filter out this workflow.
+    paths-ignore:
+      - go.mod
+      - go.sum
+      - '**/*.go'
+      - 'ui/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo No test required for this change.
