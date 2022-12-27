@@ -1,0 +1,380 @@
+package cmd
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"gotest.tools/v3/assert"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/infrahq/infra/api"
+)
+
+type testFields struct {
+	config     ClientConfig
+	count      *int32
+	serverURLs []string
+}
+
+func TestLogout(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir) // for windows
+	// k8s.io/tools/clientcmd reads HOME at import time, so this must be patched too
+	kubeConfigPath := filepath.Join(homeDir, "kube.config")
+	t.Setenv("KUBECONFIG", kubeConfigPath)
+
+	setup := func(t *testing.T, currentContext string) testFields {
+		var count int32
+		handler := func(resp http.ResponseWriter, req *http.Request) {
+			if req.URL.Path != "/api/logout" {
+				resp.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			atomic.AddInt32(&count, 1)
+			resp.WriteHeader(http.StatusOK)
+			_, _ = resp.Write([]byte(`{}`)) // API client requires a JSON response
+		}
+
+		srv := httptest.NewTLSServer(http.HandlerFunc(handler))
+		t.Cleanup(srv.Close)
+		srv2 := httptest.NewTLSServer(http.HandlerFunc(handler))
+		t.Cleanup(srv2.Close)
+
+		cfg := ClientConfig{
+			ClientConfigVersion: clientConfigVersion,
+			Hosts: []ClientHostConfig{
+				{
+					Name:          "user1",
+					Host:          srv.Listener.Addr().String(),
+					AccessKey:     "the-access-key",
+					UserID:        1,
+					SkipTLSVerify: true,
+					Current:       true,
+					Expires:       api.Time(time.Now().Add(time.Hour * 2).UTC().Truncate(time.Second)),
+				},
+				{
+					Name:          "user2",
+					Host:          srv2.Listener.Addr().String(),
+					AccessKey:     "the-access-key",
+					UserID:        2,
+					SkipTLSVerify: true,
+					Expires:       api.Time(time.Now().Add(time.Hour * 2).UTC().Truncate(time.Second)),
+				},
+			},
+		}
+		err := writeConfig(&cfg)
+		assert.NilError(t, err)
+
+		kubeCfg := clientcmdapi.Config{
+			CurrentContext: currentContext,
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"keep:not-infra": {Server: "https://keep:8080"},
+				"infra:prod":     {Server: "https://infraprod:8080"},
+			},
+			Contexts: map[string]*clientcmdapi.Context{
+				"keep:not-infra": {Cluster: "keep:not-infra", AuthInfo: "keep:not-infra"},
+				"infra:prod":     {Cluster: "infra:prod", AuthInfo: "user@example.com"},
+			},
+			AuthInfos: map[string]*clientcmdapi.AuthInfo{
+				"keep:not-infra":   {Token: "keep-token"},
+				"user@example.com": {Token: "infra-token"},
+			},
+		}
+		err = clientcmd.WriteToFile(kubeCfg, kubeConfigPath)
+		assert.NilError(t, err)
+		return testFields{
+			config:     cfg,
+			count:      &count,
+			serverURLs: []string{srv.Listener.Addr().String(), srv2.Listener.Addr().String()},
+		}
+	}
+
+	setupError := func(t *testing.T, currentContext string) testFields {
+		var count int32
+		handler := func(resp http.ResponseWriter, req *http.Request) {
+			if req.URL.Path != "/api/logout" {
+				resp.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			atomic.AddInt32(&count, 1)
+			resp.WriteHeader(http.StatusInternalServerError)
+			_, _ = resp.Write([]byte(`{}`)) // API client requires a JSON response
+		}
+
+		srv := httptest.NewTLSServer(http.HandlerFunc(handler))
+		t.Cleanup(srv.Close)
+
+		cfg := ClientConfig{
+			ClientConfigVersion: clientConfigVersion,
+			Hosts: []ClientHostConfig{
+				{
+					Name:          "user1",
+					Host:          srv.Listener.Addr().String(),
+					AccessKey:     "the-access-key",
+					UserID:        1,
+					SkipTLSVerify: true,
+					Current:       true,
+					Expires:       api.Time(time.Now().Add(time.Hour * 2).UTC().Truncate(time.Second)),
+				},
+				{
+					Name:          "user2",
+					Host:          srv.Listener.Addr().String(),
+					AccessKey:     "the-access-key",
+					UserID:        2,
+					SkipTLSVerify: true,
+					Current:       true,
+					Expires:       api.Time(time.Now().Add(-(time.Hour * 2)).UTC().Truncate(time.Second)),
+				},
+			},
+		}
+		err := writeConfig(&cfg)
+		assert.NilError(t, err)
+
+		kubeCfg := clientcmdapi.Config{
+			CurrentContext: currentContext,
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"keep:not-infra": {Server: "https://keep:8080"},
+				"infra:prod":     {Server: "https://infraprod:8080"},
+			},
+			Contexts: map[string]*clientcmdapi.Context{
+				"keep:not-infra": {Cluster: "keep:not-infra", AuthInfo: "keep:not-infra"},
+				"infra:prod":     {Cluster: "infra:prod", AuthInfo: "user@example.com"},
+			},
+			AuthInfos: map[string]*clientcmdapi.AuthInfo{
+				"keep:not-infra":   {Token: "keep-token"},
+				"user@example.com": {Token: "infra-token"},
+			},
+		}
+		err = clientcmd.WriteToFile(kubeCfg, kubeConfigPath)
+		assert.NilError(t, err)
+		return testFields{
+			config:     cfg,
+			count:      &count,
+			serverURLs: []string{srv.Listener.Addr().String()},
+		}
+	}
+
+	expectedKubeCfg := clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"keep:not-infra": {Server: "https://keep:8080"},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			"keep:not-infra": {Cluster: "keep:not-infra", AuthInfo: "keep:not-infra"},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"keep:not-infra": {Token: "keep-token"},
+		},
+	}
+
+	t.Run("default", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		expected := testFields.config
+		expected.Hosts[0].AccessKey = ""
+		expected.Hosts[0].Name = ""
+		expected.Hosts[0].UserID = 0
+		expected.Hosts[0].Expires = api.Time{}
+		assert.DeepEqual(t, &expected, updatedCfg)
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("current infra", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		expected := testFields.config
+		expected.Hosts[0].AccessKey = ""
+		expected.Hosts[0].Name = ""
+		expected.Hosts[0].UserID = 0
+		expected.Hosts[0].Expires = api.Time{}
+		assert.DeepEqual(t, &expected, updatedCfg)
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("current non-infra", func(t *testing.T) {
+		testFields := setup(t, "keep:non-infra")
+		err := Run(context.Background(), "logout")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		expected := testFields.config
+		expected.Hosts[0].AccessKey = ""
+		expected.Hosts[0].Name = ""
+		expected.Hosts[0].UserID = 0
+		expected.Hosts[0].Expires = api.Time{}
+		assert.DeepEqual(t, &expected, updatedCfg)
+
+		kubeconfig := expectedKubeCfg
+		kubeconfig.CurrentContext = "keep:non-infra"
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, kubeconfig, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("with clear", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout", "--clear")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), int32(len(updatedCfg.Hosts)))
+		assert.DeepEqual(t, testFields.config.Hosts[1], updatedCfg.Hosts[0])
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("with all", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout", "--all")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(2), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		expected := testFields.config
+		expected.Hosts[0].AccessKey = ""
+		expected.Hosts[0].Name = ""
+		expected.Hosts[0].UserID = 0
+		expected.Hosts[0].Expires = api.Time{}
+		expected.Hosts[1].AccessKey = ""
+		expected.Hosts[1].Name = ""
+		expected.Hosts[1].UserID = 0
+		expected.Hosts[1].Expires = api.Time{}
+		assert.DeepEqual(t, &expected, updatedCfg)
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("with clear all", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout", "--clear", "--all")
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(2), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		expected := ClientConfig{ClientConfigVersion: clientConfigVersion}
+		assert.DeepEqual(t, &expected, updatedCfg)
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+
+	t.Run("with one and all", func(t *testing.T) {
+		testFields := setup(t, "infra:prod")
+		err := Run(context.Background(), "logout", testFields.serverURLs[0], "--all")
+		assert.Error(t, err, "Argument [SERVER] and flag [--all] cannot be both specified.")
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+		assert.DeepEqual(t, &testFields.config, updatedCfg)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		testFields := setupError(t, "infra:prod")
+		err := Run(context.Background(), "logout", testFields.serverURLs[0])
+		assert.NilError(t, err)
+
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedCfg, err := readConfig()
+		assert.NilError(t, err)
+
+		assert.Assert(t, updatedCfg.Hosts[0].Name == "")
+		assert.Assert(t, updatedCfg.Hosts[0].AccessKey == "")
+	})
+
+	t.Run("with too many arguments", func(t *testing.T) {
+		err := Run(context.Background(), "logout", "too", "many")
+		assert.ErrorContains(t, err, `"infra logout" accepts at most 1 argument`)
+		assert.ErrorContains(t, err, `Usage:  infra logout [SERVER]`)
+	})
+
+	t.Run("expired session fails", func(t *testing.T) {
+		testFields := setupError(t, "keep:non-infra")
+		err := Run(context.Background(), "logout", "--all")
+
+		assert.NilError(t, err)
+		assert.Equal(t, int32(1), atomic.LoadInt32(testFields.count), "calls to API")
+
+		updatedKubeCfg, err := clientConfig().RawConfig()
+		expectedKubeCfg.CurrentContext = "keep:non-infra"
+		assert.NilError(t, err)
+		assert.DeepEqual(t, expectedKubeCfg, updatedKubeCfg,
+			cmpopts.EquateEmpty(),
+			cmpopts.IgnoreFields(clientcmdapi.Cluster{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.Context{}, "LocationOfOrigin"),
+			cmpopts.IgnoreFields(clientcmdapi.AuthInfo{}, "LocationOfOrigin"))
+	})
+}

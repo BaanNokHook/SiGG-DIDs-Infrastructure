@@ -1,0 +1,195 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/spf13/cobra"
+
+	"github.com/infrahq/infra/api"
+	"github.com/infrahq/infra/internal/logging"
+)
+
+type logoutCmdOptions struct {
+	clear  bool
+	server string
+	all    bool
+}
+
+func newLogoutCmd(cli *CLI) *cobra.Command {
+	var options logoutCmdOptions
+
+	cmd := &cobra.Command{
+		Use:   "logout [SERVER]",
+		Short: "Log out of Infra",
+		Long: `Log out of Infra
+Note: [SERVER] and [--all] cannot be both specified. Choose either one or all servers.`,
+		Example: `# Log out of current server
+$ infra logout
+		
+# Log out of a specific server
+$ infra logout infraexampleserver.com
+		
+# Logout of all servers
+$ infra logout --all 
+		
+# Log out of current server and clear from list 
+$ infra logout --clear
+		
+# Log out of a specific server and clear from list
+$ infra logout infraexampleserver.com --clear 
+		
+# Logout and clear list of all servers 
+$ infra logout --all --clear`,
+		Args:    MaxArgs(1),
+		GroupID: groupCore,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				if options.all {
+					return fmt.Errorf("Argument [SERVER] and flag [--all] cannot be both specified.")
+				}
+				options.server = args[0]
+			}
+			return logout(cli, options.clear, options.server, options.all)
+		},
+	}
+
+	cmd.Flags().BoolVar(&options.clear, "clear", false, "clear from list of servers")
+	cmd.Flags().BoolVar(&options.all, "all", false, "logout of all servers")
+
+	return cmd
+}
+
+func logoutOfServer(hostConfig *ClientHostConfig) (success bool) {
+	ctx := context.TODO()
+	opts := &APIClientOpts{
+		Host:      hostConfig.Host,
+		AccessKey: hostConfig.AccessKey,
+		Transport: httpTransportForHostConfig(hostConfig),
+	}
+	client, err := NewAPIClient(opts)
+	if err != nil {
+		logging.Debugf("err: %s", err)
+		return false
+	}
+
+	defer func() {
+		hostConfig.AccessKey = ""
+		hostConfig.UserID = 0
+		hostConfig.Name = ""
+		hostConfig.Expires = api.Time{}
+	}()
+
+	if hostConfig.isLoggedIn() {
+		err := client.Logout(ctx)
+		switch {
+		case api.ErrorStatusCode(err) == http.StatusUnauthorized:
+			logging.Debugf("err: %s", err)
+			return false
+		case err != nil:
+			logging.Debugf("err: %s", err)
+			return false
+		}
+	}
+
+	logging.Debugf("logged out of server [%s]", hostConfig.Host)
+	return true
+}
+
+func logout(cli *CLI, clear bool, server string, all bool) error {
+	switch {
+	case all:
+		logging.Debugf("logging out of all servers\n")
+	case server == "":
+		logging.Debugf("logging out of current server\n")
+	default:
+		logging.Debugf("logging out of server [%s]\n", server)
+	}
+
+	if all {
+		return logoutAll(cli, clear)
+	}
+
+	return logoutOne(cli, clear, server)
+}
+
+func logoutAll(cli *CLI, clear bool) error {
+	config, err := readConfig()
+	if err != nil {
+		if errors.Is(err, ErrConfigNotFound) {
+			return nil
+		}
+
+		return err
+	}
+
+	for i := range config.Hosts {
+		logoutOfServer(&config.Hosts[i])
+	}
+
+	fmt.Fprintf(cli.Stderr, "Logged out of all servers.\n")
+	if clear {
+		config.Hosts = nil
+		logging.Debugf("cleared all servers from login list\n")
+	}
+
+	if err := clearKubeconfig(); err != nil {
+		return err
+	}
+
+	if err := writeConfig(config); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func logoutOne(cli *CLI, clear bool, server string) error {
+	config, err := readConfig()
+	if err != nil {
+		if errors.Is(err, ErrConfigNotFound) {
+			return nil
+		}
+
+		return err
+	}
+
+	host, idx := findClientConfigHost(config, server)
+
+	if host == nil {
+		return nil
+	}
+
+	success := logoutOfServer(host)
+	if success {
+		fmt.Fprintf(cli.Stderr, "Logged out of server %s\n", host.Host)
+	}
+
+	if clear {
+		serverURL := host.Host
+		config.Hosts[idx] = config.Hosts[len(config.Hosts)-1]
+		config.Hosts = config.Hosts[:len(config.Hosts)-1]
+		logging.Debugf("cleared server [%s]", serverURL)
+	}
+
+	if err := clearKubeconfig(); err != nil {
+		return err
+	}
+
+	if err := writeConfig(config); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func findClientConfigHost(config *ClientConfig, server string) (*ClientHostConfig, int) {
+	for i := range config.Hosts {
+		if (server == "" && config.Hosts[i].Current) || (server == config.Hosts[i].Host) {
+			return &config.Hosts[i], i
+		}
+	}
+	return nil, -1
+}

@@ -1,0 +1,15 @@
+- connected: false
+  connection:
+    ca: ""
+    url: 10.0.0.1
+  created: null
+  id: "38"
+  kind: kubernetes
+  lastSeen: null
+  name: destinationName
+  resources: null
+  roles: null
+  uniqueID: ""
+  updated: null
+  version: ""
+
