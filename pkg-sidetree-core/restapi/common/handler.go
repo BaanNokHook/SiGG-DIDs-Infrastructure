@@ -1,0 +1,23 @@
+/*
+SiGG-DIDs-Infrastructure
+*/
+
+package common
+
+import (
+	"net/http"
+
+	"github.com/trustbloc/sidetree-core-go/pkg/internal/log"
+)
+
+var logger = log.New("sidetree-core-restapi-common")
+
+// HTTPRequestHandler is an HTTP handler.
+type HTTPRequestHandler func(http.ResponseWriter, *http.Request)
+
+// HTTPHandler is a HTTP handler descriptor containing the context path, method, and request handler.
+type HTTPHandler interface {
+	Path() string
+	Method() string
+	Handler() HTTPRequestHandler
+}
