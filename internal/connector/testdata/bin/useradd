@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+
+go run ./testdata/bin/echo.go useradd "$@" >> ${TEST_CONNECTOR_USER_LOG_FILE}
