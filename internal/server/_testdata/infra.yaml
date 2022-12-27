@@ -1,0 +1,80 @@
+secrets:
+  - name: base64
+    kind: plaintext
+
+providers:
+  - kind: okta
+    domain: https://test.okta.com
+    clientID: base64:MG9hcG4wcXdpUVBpTUl5UjM1ZDY=
+    clientSecret: base64:c3VwZXJzZWNyZXQ=
+  - kind: okta
+    domain: https://test.okta.com
+    clientID: plaintext:0oapn0qwiQPiMIyR35d6
+    clientSecret: base64:c3VwZXJzZWNyZXQ=
+
+groups:
+  - name: Everyone
+    provider: okta
+    grants:
+      - name: writer
+        kind: cluster-role
+        destinations:
+          - name: AAA
+            kind: kubernetes
+      - name: audit
+        kind: role
+        destinations:
+          - name: CCC
+            kind: kubernetes
+            namespaces:
+              - infrahq
+              - development
+      - name: pod-create
+        kind: role
+        destinations:
+          - name: CCC
+            kind: kubernetes
+            namespaces:
+              - infrahq
+  - name: Engineering
+    provider: okta
+    grants:
+      - name: writer
+        kind: role
+        destinations:
+          - name: BBB
+            kind: kubernetes
+
+users:
+  - email: jbond@infrahq.com
+    grants:
+      - name: admin
+        kind: cluster-role
+        destinations:
+          - labels:
+              - kubernetes
+            kind: kubernetes
+      - name: audit
+        kind: role
+        destinations:
+          - name: CCC
+            namespaces:
+              - infrahq
+              - development
+            kind: kubernetes
+      - name: pod-create
+        kind: role
+        destinations:
+          - name: CCC
+            namespaces:
+              - infrahq
+            kind: kubernetes
+      - name: view
+        kind: role
+        destinations:
+          - labels:
+              - us-west-1
+              - us-east-1
+            namespaces:
+              - infrahq
+            kind: kubernetes
